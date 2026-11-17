@@ -7,15 +7,17 @@ Use one automation per SONOFF TRVZB Gen 1 radiator valve. The blueprint copies a
 ### Install and configure
 
 1. Use Home Assistant 2024.10 or later with ZHA. On the valve's device page, verify that **External temperature sensor** (switch) and **External temperature sensor value** (number) are enabled entities. Set the room sensor and number entity to °C. Confirm the number shows a numeric state and enable the external sensor switch manually. Availability of these entities and support for writing them depend on the installed ZHA quirk and valve firmware. [ZHA TRVZB quirk](https://github.com/zigpy/zha-device-handlers/blob/dev/zhaquirks/sonoff/trvzb.py)
-2. In **Settings → Automations & scenes → Blueprints → Import blueprint**, use the GitHub URL of the [blueprint file](sonoff_trvzb_zha_external_temperature_sync.yaml) once published. For local installation, copy the file to `blueprints/automation/sonoff/sonoff_trvzb_zha_external_temperature_sync.yaml` under your Home Assistant configuration directory and reload automations. [Home Assistant blueprint installation](https://www.home-assistant.io/docs/automation/using_blueprints/)
-3. Create one automation from the blueprint per valve. Select the room sensor, the valve's climate entity, and the switch and number belonging to that same valve. Optionally select a window contact whose `off` state means closed. Leave the existing window automations in control of HVAC mode. Disable any older external-temperature sync automation for this valve before enabling the new one.
-4. Choose a refresh interval from 1 to 90 minutes and, optionally, an offset from 0 to 59. The default offset is 7, preserving the original hourly schedule in time zones with whole-hour UTC offsets. Regular writes use elapsed UTC minutes and an offset modulo the interval, so cadence survives clock changes and hour boundaries. Choose offsets with different remainders for valves on the same interval. Event-driven writes can still coincide.
+2. In **Settings → Automations & scenes → Blueprints → Import blueprint**, paste the [raw GitHub URL](https://raw.githubusercontent.com/borgeorgiev/home-assistant-blueprints/main/sonoff_trvzb_zha_external_temperature_sync.yaml). For local installation, copy the file to `blueprints/automation/sonoff/sonoff_trvzb_zha_external_temperature_sync.yaml` under your Home Assistant configuration directory and reload automations. [Home Assistant blueprint installation](https://www.home-assistant.io/docs/automation/using_blueprints/)
+3. Create one automation per valve. Select the **SONOFF TRVZB valve** and **Room temperature sensor device** (the SNZB). If an existing skylight automation uses a contact, select that same binary sensor as the optional window contact. Leave the skylight automation enabled. Disable any older external-temperature sync automation for this valve before enabling the new one.
+4. The default refresh interval is 60 minutes with an offset of 7. Under **Advanced settings**, you can select an interval from 1 to 90 minutes and an offset from 0 to 59. Regular writes use elapsed UTC minutes and an offset modulo the interval, so cadence survives clock changes and hour boundaries. Choose offsets with different remainders for valves on the same interval. Event-driven writes can still coincide.
 
-For an existing automation, you can overwrite the previously installed blueprint **at its existing Home Assistant path** and reload automations. All existing input keys are supported, including `hourly_refresh_minute` for the offset. If you install at the new path, update the automation's `use_blueprint.path` or recreate the automation and disable the old instance.
+Auto-detection looks for one climate entity and the standard ZHA `_external_temperature_sensor` switch and `_external_temperature_sensor_value` number on the selected valve. On the selected room device it looks for one `sensor` with an ID ending in `_temperature` and checks its temperature device class before writing. These suffixes may include Home Assistant's numeric disambiguator, such as `_2`. If an entity is missing, renamed, or ambiguous, explicitly select it under **Advanced settings**. An override must belong to the corresponding device if one is selected. Reload automations after renaming an automatically detected entity so the source event subscription is rebuilt.
+
+For an existing GitHub import, use **Re-import blueprint** from the blueprint's menu. For a local installation, overwrite the blueprint at its existing Home Assistant path and reload automations. Existing entity selections are kept as overrides. To switch an existing automation to auto-detection, select both devices, clear its advanced entity overrides, and save.
 
 ### Example `automations.yaml` entries
 
-These use illustrative entity IDs. Replace them with the entities from your installation and adjust the blueprint path if Home Assistant imported it under a different directory.
+These use illustrative device IDs and a skylight entity ID. Replace them with values from your installation and adjust the blueprint path if Home Assistant imported it under a different directory. Selecting the devices in the automation editor fills in their IDs for you.
 
 ```yaml
 - id: sonoff_trvzb_entrance_external_temperature
@@ -23,10 +25,8 @@ These use illustrative entity IDs. Replace them with the entities from your inst
   use_blueprint:
     path: sonoff/sonoff_trvzb_zha_external_temperature_sync.yaml
     input:
-      room_temperature: sensor.entrance_room_temperature
-      trv_climate: climate.entrance_radiator_thermostat
-      trv_external_sensor_switch: switch.entrance_radiator_external_temperature_sensor
-      trv_external_temperature: number.entrance_radiator_external_temperature_sensor_value
+      room_sensor_device: "a1111111111111111111111111111111"
+      trv_device: "b1111111111111111111111111111111"
       optional_window_contact: binary_sensor.entrance_skylight
       refresh_interval_minutes: 60
       hourly_refresh_minute: 7
@@ -36,10 +36,8 @@ These use illustrative entity IDs. Replace them with the entities from your inst
   use_blueprint:
     path: sonoff/sonoff_trvzb_zha_external_temperature_sync.yaml
     input:
-      room_temperature: sensor.corridor_room_temperature
-      trv_climate: climate.corridor_radiator_thermostat
-      trv_external_sensor_switch: switch.corridor_radiator_external_temperature_sensor
-      trv_external_temperature: number.corridor_radiator_external_temperature_sensor_value
+      room_sensor_device: "a2222222222222222222222222222222"
+      trv_device: "b2222222222222222222222222222222"
       refresh_interval_minutes: 60
       hourly_refresh_minute: 37
 ```
@@ -61,6 +59,7 @@ These use illustrative entity IDs. Replace them with the entities from your inst
 
 ### Changelog
 
+- Added device selection with automatic entity detection and an Advanced settings section for overrides and refresh timing.
 - Added a configurable 60-minute keepalive with a per-valve offset and retained the original input keys.
 - Added readiness detection for delayed startup, reconnects, the external sensor switch, HVAC mode changes, and the optional window contact.
 - Added target availability, Celsius and range checks. Preserved the final heat, switch and window checks before the only service action, `number.set_value`.

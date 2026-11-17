@@ -3,42 +3,30 @@ blueprint:
   description: >
     Sends a Celsius room temperature to a SONOFF TRVZB Gen 1 through ZHA
     when the reading changes, on a configurable schedule, at startup, and
-    when the configured entities become ready. Writes require heat mode,
+    when the configured entities become ready. Select the valve and room
+    sensor devices to detect their entities automatically. Writes require heat mode,
     an enabled external sensor switch, and a closed window if configured.
     Disable older temperature sync automations for this valve before enabling this one.
   domain: automation
   homeassistant:
     min_version: "2024.10.0"
   input:
-    room_temperature:
-      name: Room temperature sensor
-      description: External sensor providing room temperature in degrees Celsius.
+    trv_device:
+      name: SONOFF TRVZB valve
+      description: Select the ZHA valve. Its climate entity, switch, and number are detected automatically.
+      default: ""
       selector:
-        entity:
+        device:
           filter:
-            - domain: sensor
-              device_class: temperature
-    trv_climate:
-      name: SONOFF TRVZB thermostat
-      description: The TRVZB climate entity (for example, Radiator Corridor Thermostat).
+            - integration: zha
+              manufacturer: SONOFF
+              model: TRVZB
+    room_sensor_device:
+      name: Room temperature sensor device
+      description: Select the SONOFF SNZB room sensor. Its temperature entity is detected automatically.
+      default: ""
       selector:
-        entity:
-          filter:
-            - domain: climate
-    trv_external_temperature:
-      name: TRVZB external temperature value
-      description: ZHA external temperature value number with its unit set to Celsius.
-      selector:
-        entity:
-          filter:
-            - domain: number
-    trv_external_sensor_switch:
-      name: TRVZB external temperature sensor switch
-      description: ZHA switch entity ending in external_temperature_sensor.
-      selector:
-        entity:
-          filter:
-            - domain: switch
+        device: {}
     optional_window_contact:
       name: Window / skylight sensor (optional)
       description: >
@@ -51,42 +39,110 @@ blueprint:
         entity:
           filter:
             - domain: binary_sensor
-    refresh_interval_minutes:
-      name: Refresh interval
-      description: Interval between scheduled writes, including when the temperature stays the same.
-      default: 60
-      selector:
-        number:
-          min: 1
-          max: 90
-          step: 1
-          unit_of_measurement: min
-          mode: box
-    hourly_refresh_minute:
-      name: Refresh minute offset (optional)
-      description: >
-        Shifts the schedule by this many minutes, modulo the interval.
-        Use different offsets to stagger scheduled writes across valves.
-      default: 7
-      selector:
-        number:
-          min: 0
-          max: 59
-          step: 1
-          mode: box
+    advanced:
+      name: Advanced settings
+      description: Adjust the refresh schedule or override entity detection. Existing entity selections are preserved.
+      collapsed: true
+      input:
+        refresh_interval_minutes:
+          name: Refresh interval
+          description: Interval between scheduled writes, including when the temperature stays the same.
+          default: 60
+          selector:
+            number:
+              min: 1
+              max: 90
+              step: 1
+              unit_of_measurement: min
+              mode: box
+        hourly_refresh_minute:
+          name: Refresh minute offset (optional)
+          description: >
+            Shifts the schedule by this many minutes, modulo the interval.
+            Use different offsets to stagger scheduled writes across valves.
+          default: 7
+          selector:
+            number:
+              min: 0
+              max: 59
+              step: 1
+              mode: box
+        room_temperature:
+          name: Room temperature sensor
+          description: External sensor providing room temperature in degrees Celsius.
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+                  device_class: temperature
+        trv_climate:
+          name: SONOFF TRVZB thermostat
+          description: The TRVZB climate entity (for example, Radiator Corridor Thermostat).
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: climate
+        trv_external_temperature:
+          name: TRVZB external temperature value
+          description: ZHA external temperature value number with its unit set to Celsius.
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: number
+        trv_external_sensor_switch:
+          name: TRVZB external temperature sensor switch
+          description: ZHA switch entity ending in external_temperature_sensor.
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: switch
 
-# These inputs are available both to the readiness trigger and to action templates.
+# Resolve registry IDs in limited templates so the event listener can subscribe
+# to a single source entity before its state becomes available.
 trigger_variables:
-  source_sensor: !input room_temperature
-  climate_entity: !input trv_climate
-  temperature_number: !input trv_external_temperature
-  external_switch: !input trv_external_sensor_switch
+  valve_device: !input trv_device
+  sensor_device: !input room_sensor_device
+  source_override: !input room_temperature
+  climate_override: !input trv_climate
+  number_override: !input trv_external_temperature
+  switch_override: !input trv_external_sensor_switch
   window_contact: !input optional_window_contact
+  source_sensor: >-
+    {% set entities = device_entities(sensor_device) if sensor_device else [] %}
+    {% if source_override %}
+      {{ source_override if not sensor_device or source_override in entities else '' }}
+    {% else %}
+      {% set matches = entities | select('match', '^sensor[.].*_temperature(_[0-9]+)?$') | list %}
+      {{ matches[0] if matches | count == 1 else '' }}
+    {% endif %}
+  valve_entities: >-
+    {% set entities = device_entities(valve_device) if valve_device else [] %}
+    {% macro resolve(override, pattern) -%}
+      {%- if override -%}
+        {{ override if not valve_device or override in entities else '' }}
+      {%- else -%}
+        {%- set matches = entities | select('match', pattern) | list -%}
+        {{ matches[0] if matches | count == 1 else '' }}
+      {%- endif -%}
+    {%- endmacro %}
+    {{ {
+      'climate': resolve(climate_override, '^climate[.]'),
+      'number': resolve(number_override, '^number[.].*_external_temperature_sensor_value(_[0-9]+)?$'),
+      'switch': resolve(switch_override, '^switch[.].*_external_temperature_sensor(_[0-9]+)?$')
+    } }}
+  climate_entity: "{{ valve_entities.climate }}"
+  temperature_number: "{{ valve_entities.number }}"
+  external_switch: "{{ valve_entities.switch }}"
 
 triggers:
-  - trigger: state
-    entity_id: !input room_temperature
-    to: null
+  - trigger: event
+    event_type: state_changed
+    event_data:
+      entity_id: "{{ source_sensor }}"
     id: sensor_changed
   - trigger: time_pattern
     minutes: "*"
@@ -97,9 +153,13 @@ triggers:
   - trigger: template
     id: entities_ready
     value_template: &ready >-
-      {{ is_state(climate_entity, 'heat')
+      {{ climate_entity != '' and external_switch != ''
+         and source_sensor != '' and temperature_number != ''
+         and (not valve_device or source_sensor not in device_entities(valve_device))
+         and is_state(climate_entity, 'heat')
          and is_state(external_switch, 'on')
          and is_number(states(source_sensor))
+         and state_attr(source_sensor, 'device_class') == 'temperature'
          and state_attr(source_sensor, 'unit_of_measurement') == '°C'
          and is_number(states(temperature_number))
          and state_attr(temperature_number, 'unit_of_measurement') == '°C'
@@ -122,9 +182,13 @@ conditions:
         {{ (minute - (refresh_offset | int)) % (refresh_interval | int) == 0 }}
       {% elif trigger_id == 'sensor_changed' %}
         {# The readiness trigger already handles recovery from invalid source data. #}
-        {{ trigger.from_state is not none
-           and is_number(trigger.from_state.state)
-           and trigger.from_state.attributes.get('unit_of_measurement') == '°C' }}
+        {% set old = trigger.event.data.old_state %}
+        {% set new = trigger.event.data.new_state %}
+        {{ trigger.event.data.entity_id == source_sensor
+           and old is not none and new is not none
+           and old.state != new.state and is_number(old.state)
+           and old.attributes.get('device_class') == 'temperature'
+           and old.attributes.get('unit_of_measurement') == '°C' }}
       {% else %}
         {{ true }}
       {% endif %}
@@ -149,7 +213,7 @@ actions:
     value_template: *ready
   - action: number.set_value
     target:
-      entity_id: !input trv_external_temperature
+      entity_id: "{{ temperature_number }}"
     data:
       value: "{{ value_to_write }}"
 
