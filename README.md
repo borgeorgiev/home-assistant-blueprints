@@ -13,6 +13,8 @@ Use one automation per SONOFF TRVZB Gen 1 radiator valve. The blueprint copies a
 
 Auto-detection looks for one climate entity and the standard ZHA `_external_temperature_sensor` switch and `_external_temperature_sensor_value` number on the selected valve. On the selected room device it looks for one `sensor` with an ID ending in `_temperature` and checks its temperature device class before writing. These suffixes may include Home Assistant's numeric disambiguator, such as `_2`. If an entity is missing, renamed, or ambiguous, explicitly select it under **Advanced settings**. An override must belong to the corresponding device if one is selected. Reload automations after renaming an automatically detected entity so the source event subscription is rebuilt.
 
+The room device picker shows ZHA devices with recognized SONOFF SNZB-02 series model IDs. This includes the SNZB-02P that reports `eWeLink` as its manufacturer. If an older sensor reports a generic model such as `TH01`, leave the room device blank and select its temperature entity under **Advanced settings**.
+
 For an existing GitHub import, use **Re-import blueprint** from the blueprint's menu. For a local installation, overwrite the blueprint at its existing Home Assistant path and reload automations. Existing entity selections are kept as overrides. To switch an existing automation to auto-detection, select both devices, clear its advanced entity overrides, and save.
 
 ### Example `automations.yaml` entries

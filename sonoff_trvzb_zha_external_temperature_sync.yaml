@@ -23,10 +23,38 @@ blueprint:
               model: TRVZB
     room_sensor_device:
       name: Room temperature sensor device
-      description: Select the SONOFF SNZB room sensor. Its temperature entity is detected automatically.
+      description: Select a SONOFF SNZB-02 series temperature sensor connected through ZHA.
       default: ""
       selector:
-        device: {}
+        device:
+          filter:
+            - integration: zha
+              manufacturer: SONOFF
+              model: SNZB-02
+            - integration: zha
+              manufacturer: SONOFF
+              model: SNZB-02B
+            - integration: zha
+              manufacturer: SONOFF
+              model: SNZB-02D
+            - integration: zha
+              manufacturer: SONOFF
+              model: SNZB-02DR2
+            - integration: zha
+              manufacturer: SONOFF
+              model: SNZB-02LD
+            - integration: zha
+              manufacturer: SONOFF
+              model: SNZB-02P
+            - integration: zha
+              manufacturer: eWeLink
+              model: SNZB-02P
+            - integration: zha
+              manufacturer: SONOFF
+              model: SNZB-02UL
+            - integration: zha
+              manufacturer: SONOFF
+              model: SNZB-02WD
     optional_window_contact:
       name: Window / skylight sensor (optional)
       description: >
