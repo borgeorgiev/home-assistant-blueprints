@@ -1,0 +1,129 @@
+# SONOFF TRVZB (Gen 1) / ZHA — external room temperature synchronisation
+# Version: 1.0.0
+# Intended use: one automation per radiator, alongside separate window/HVAC automation.
+# This automation NEVER calls climate.turn_on or changes the target temperature.
+# IMPORTANT: Disable older remote-temperature-link automations for the same TRV.
+blueprint:
+  name: "SONOFF TRVZB (ZHA) — Safe External Temperature Sync (hourly)"
+  description: >
+    For SONOFF TRVZB Gen 1 exposed through ZHA. Copies a room sensor's
+    temperature to the TRV external-temperature number on sensor changes,
+    once every hour (even when temperature is unchanged), after Home Assistant
+    startup, when the TRV returns to heat mode, and when its external sensor
+    switch turns on. Does not write while the TRV is off or when the optional
+    window contact is not confirmed closed. Never turns heating on or changes
+    the setpoint. Select a different hourly refresh minute for each TRV to
+    spread Zigbee traffic. Leave the TRV's external-temperature switch enabled.
+    Disable any older external-temperature sync automations for this TRV.
+  domain: automation
+  input:
+    room_temperature:
+      name: Room temperature sensor
+      description: External sensor providing room temperature in degrees Celsius.
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: temperature
+    trv_climate:
+      name: SONOFF TRVZB thermostat
+      description: The TRVZB climate entity (for example, Radiator Corridor Thermostat).
+      selector:
+        entity:
+          filter:
+            - domain: climate
+    trv_external_temperature:
+      name: TRVZB external temperature value
+      description: ZHA number entity ending in external_temperature_sensor_value.
+      selector:
+        entity:
+          filter:
+            - domain: number
+    trv_external_sensor_switch:
+      name: TRVZB external temperature sensor switch
+      description: ZHA switch entity ending in external_temperature_sensor.
+      selector:
+        entity:
+          filter:
+            - domain: switch
+    optional_window_contact:
+      name: Window / skylight sensor (optional)
+      description: >
+        Optional binary sensor (off = confirmed closed). If selected, no
+        temperature is written while the window is open or unavailable,
+        including before a separate automation turns the TRV off.
+        Leave blank if not used.
+      default: ""
+      selector:
+        entity:
+          filter:
+            - domain: binary_sensor
+    hourly_refresh_minute:
+      name: Minute of each hour to refresh
+      description: >
+        One refresh per hour even if the sensor value does not change.
+        Set e.g. 07 for corridor and 37 for entrance to stagger writes.
+      default: 7
+      selector:
+        number:
+          min: 0
+          max: 59
+          step: 1
+          mode: box
+
+variables:
+  source_sensor: !input room_temperature
+  climate_entity: !input trv_climate
+  temperature_number: !input trv_external_temperature
+  external_switch: !input trv_external_sensor_switch
+  window_contact: !input optional_window_contact
+
+triggers:
+  - trigger: state
+    entity_id: !input room_temperature
+    to: null  # value change only; ignore attribute-only updates
+    id: sensor_changed
+  - trigger: time_pattern
+    hours: "*"
+    minutes: !input hourly_refresh_minute
+    seconds: 0
+    id: hourly_refresh
+  - trigger: state
+    entity_id: !input trv_climate
+    to: "heat"
+    id: heating_resumed
+  - trigger: state
+    entity_id: !input trv_external_sensor_switch
+    to: "on"
+    id: external_enabled
+  - trigger: homeassistant
+    event: start
+    id: home_assistant_started
+
+conditions:
+  - condition: template
+    value_template: >-
+      {{ is_state(climate_entity, 'heat')
+         and is_state(external_switch, 'on')
+         and is_number(states(source_sensor))
+         and state_attr(source_sensor, 'unit_of_measurement') == '°C'
+         and (window_contact | trim == '' or is_state(window_contact, 'off')) }}
+
+actions:
+  # Repeat the safety check immediately before writing (a window automation
+  # may have switched the TRV off while this run was being prepared).
+  - condition: template
+    value_template: >-
+      {{ is_state(climate_entity, 'heat')
+         and is_state(external_switch, 'on')
+         and is_number(states(source_sensor))
+         and state_attr(source_sensor, 'unit_of_measurement') == '°C'
+         and (window_contact | trim == '' or is_state(window_contact, 'off')) }}
+  - action: number.set_value
+    target:
+      entity_id: !input trv_external_temperature
+    data:
+      value: "{{ states(source_sensor) | float | round(1) }}"
+
+mode: restart
+max_exceeded: silent

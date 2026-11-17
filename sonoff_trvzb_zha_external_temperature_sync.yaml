@@ -1,0 +1,158 @@
+blueprint:
+  name: "SONOFF TRVZB (ZHA) — External Temperature Sync"
+  description: >
+    Sends a Celsius room temperature to a SONOFF TRVZB Gen 1 through ZHA
+    when the reading changes, on a configurable schedule, at startup, and
+    when the configured entities become ready. Writes require heat mode,
+    an enabled external sensor switch, and a closed window if configured.
+    Disable older temperature sync automations for this valve before enabling this one.
+  domain: automation
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    room_temperature:
+      name: Room temperature sensor
+      description: External sensor providing room temperature in degrees Celsius.
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: temperature
+    trv_climate:
+      name: SONOFF TRVZB thermostat
+      description: The TRVZB climate entity (for example, Radiator Corridor Thermostat).
+      selector:
+        entity:
+          filter:
+            - domain: climate
+    trv_external_temperature:
+      name: TRVZB external temperature value
+      description: ZHA external temperature value number with its unit set to Celsius.
+      selector:
+        entity:
+          filter:
+            - domain: number
+    trv_external_sensor_switch:
+      name: TRVZB external temperature sensor switch
+      description: ZHA switch entity ending in external_temperature_sensor.
+      selector:
+        entity:
+          filter:
+            - domain: switch
+    optional_window_contact:
+      name: Window / skylight sensor (optional)
+      description: >
+        Optional binary sensor (off = confirmed closed). If selected, no
+        temperature is written while the window is open or unavailable,
+        including before a separate automation turns the TRV off.
+        Leave blank if not used.
+      default: ""
+      selector:
+        entity:
+          filter:
+            - domain: binary_sensor
+    refresh_interval_minutes:
+      name: Refresh interval
+      description: Interval between scheduled writes, including when the temperature stays the same.
+      default: 60
+      selector:
+        number:
+          min: 1
+          max: 90
+          step: 1
+          unit_of_measurement: min
+          mode: box
+    hourly_refresh_minute:
+      name: Refresh minute offset (optional)
+      description: >
+        Shifts the schedule by this many minutes, modulo the interval.
+        Use different offsets to stagger scheduled writes across valves.
+      default: 7
+      selector:
+        number:
+          min: 0
+          max: 59
+          step: 1
+          mode: box
+
+# These inputs are available both to the readiness trigger and to action templates.
+trigger_variables:
+  source_sensor: !input room_temperature
+  climate_entity: !input trv_climate
+  temperature_number: !input trv_external_temperature
+  external_switch: !input trv_external_sensor_switch
+  window_contact: !input optional_window_contact
+
+triggers:
+  - trigger: state
+    entity_id: !input room_temperature
+    to: null
+    id: sensor_changed
+  - trigger: time_pattern
+    minutes: "*"
+    seconds: 0
+    id: refresh_tick
+  # A false-to-true transition handles delayed startup, reconnects, heat mode,
+  # switch enable, and restoration of a confirmed closed window.
+  - trigger: template
+    id: entities_ready
+    value_template: &ready >-
+      {{ is_state(climate_entity, 'heat')
+         and is_state(external_switch, 'on')
+         and is_number(states(source_sensor))
+         and state_attr(source_sensor, 'unit_of_measurement') == '°C'
+         and is_number(states(temperature_number))
+         and state_attr(temperature_number, 'unit_of_measurement') == '°C'
+         and (window_contact == '' or is_state(window_contact, 'off')) }}
+  - trigger: homeassistant
+    event: start
+    id: home_assistant_started
+
+variables:
+  refresh_interval: !input refresh_interval_minutes
+  refresh_offset: !input hourly_refresh_minute
+
+conditions:
+  - alias: Check the refresh schedule or accept an event
+    condition: template
+    value_template: >-
+      {% set trigger_id = trigger.id | default('') if trigger is defined else '' %}
+      {% if trigger_id == 'refresh_tick' %}
+        {% set minute = (as_timestamp(trigger.now) // 60) | int %}
+        {{ (minute - (refresh_offset | int)) % (refresh_interval | int) == 0 }}
+      {% elif trigger_id == 'sensor_changed' %}
+        {# The readiness trigger already handles recovery from invalid source data. #}
+        {{ trigger.from_state is not none
+           and is_number(trigger.from_state.state)
+           and trigger.from_state.attributes.get('unit_of_measurement') == '°C' }}
+      {% else %}
+        {{ true }}
+      {% endif %}
+  - alias: Accept runs only while the entities are ready
+    condition: template
+    value_template: *ready
+
+actions:
+  - variables:
+      room_reading: "{{ states(source_sensor) | float(none) }}"
+      value_to_write: "{{ room_reading | round(1) if is_number(room_reading) else none }}"
+  - alias: Check the reading against the target number's range
+    condition: template
+    value_template: >-
+      {% set minimum = state_attr(temperature_number, 'min') %}
+      {% set maximum = state_attr(temperature_number, 'max') %}
+      {{ is_number(value_to_write) and is_number(minimum) and is_number(maximum)
+         and (minimum | float) <= value_to_write <= (maximum | float)
+         and room_reading == (states(source_sensor) | float(none)) }}
+  - alias: Recheck the live states immediately before dispatch
+    condition: template
+    value_template: *ready
+  - action: number.set_value
+    target:
+      entity_id: !input trv_external_temperature
+    data:
+      value: "{{ value_to_write }}"
+
+mode: queued
+max: 2
+max_exceeded: silent
